@@ -345,7 +345,14 @@ class EagleVerifyInput:
         tokens. I.e., logits_output.next_token_logits only contains
         accepted token logits.
         """
+        logger.info(f"=== Eagle3 Verify Start ===")
+        logger.info(f"Batch size: {len(batch.reqs)}")
+        logger.info(f"Forward mode: {batch.forward_mode}")
+        logger.info(f"Page size: {page_size}")
+        logger.info(f"Spec steps: {self.spec_steps}")
+        logger.info(f"Draft token num: {self.draft_token_num}")
         if batch.forward_mode.is_idle():
+            logger.info(f"Batch is idle, returning empty verify output")
             return EagleVerifyOutput(
                 draft_input=EagleDraftInput.create_idle_input(
                     device=batch.device,
@@ -369,6 +376,13 @@ class EagleVerifyInput:
         candidates = self.draft_token.reshape(bs, self.draft_token_num)
         sampling_info = batch.sampling_info
 
+        logger.info(f"=== Verify Setup ===")
+        logger.info(f"Batch size (bs): {bs}")
+        logger.info(f"Candidates shape: {candidates.shape}")
+        logger.info(f"Draft token shape: {self.draft_token.shape}")
+        logger.info(f"Retrive index: {self.retrive_index}")
+        logger.info(f"Logits output shape: {logits_output.next_token_logits.shape}")
+
         predict_shape = list(logits_output.next_token_logits.shape)[:-1]
         predict_shape[-1] += 1
         predict = torch.empty(predict_shape, dtype=torch.int32, device="cuda")
@@ -376,6 +390,9 @@ class EagleVerifyInput:
             (bs, self.spec_steps + 1), -1, dtype=torch.int32, device="cuda"
         )
         accept_length = torch.empty((bs,), dtype=torch.int32, device="cuda")
+
+        logger.info(f"Predict shape: {predict_shape}")
+        logger.info(f"Accept index shape: {accept_index.shape}")
 
         if bs != len(sampling_info):
             sampling_info = copy.deepcopy(sampling_info)
@@ -411,9 +428,15 @@ class EagleVerifyInput:
             )
 
         # Sample tokens
+        logger.info(f"=== Token Sampling ===")
+        logger.info(f"Is all greedy: {batch.sampling_info.is_all_greedy}")
+        
         if batch.sampling_info.is_all_greedy:
             target_predict = torch.argmax(logits_output.next_token_logits, dim=-1)
             target_predict = target_predict.reshape(bs, self.draft_token_num)
+            
+            logger.info(f"Target predict shape: {target_predict.shape}")
+            logger.info(f"Target predict: {target_predict}")
 
             verify_tree_greedy(
                 predicts=predict,  # mutable
@@ -425,6 +448,11 @@ class EagleVerifyInput:
                 retrive_next_sibling=self.retrive_next_sibling,
                 target_predict=target_predict,
             )
+            
+            logger.info(f"After greedy verification:")
+            logger.info(f"Predict: {predict}")
+            logger.info(f"Accept index: {accept_index}")
+            logger.info(f"Accept length: {accept_length}")
         else:
             # apply temperature and get target probs
             expanded_temperature = torch.repeat_interleave(
@@ -478,6 +506,11 @@ class EagleVerifyInput:
                 ],
                 deterministic=True,
             )
+            
+            logger.info(f"After sampling verification:")
+            logger.info(f"Predict: {predict}")
+            logger.info(f"Accept index: {accept_index}")
+            logger.info(f"Accept length: {accept_length}")
 
         if SIMULATE_ACC_LEN:
             # Do simulation
@@ -496,17 +529,32 @@ class EagleVerifyInput:
         predict_cpu = predict.tolist()
         has_finished = False
 
+        logger.info(f"=== Request Processing ===")
+        logger.info(f"Accept index CPU: {accept_index_cpu}")
+        logger.info(f"Predict CPU: {predict_cpu}")
+        logger.info(f"Number of requests: {len(batch.reqs)}")
+
         # Iterate every accepted token and check if req has finished after append the token
         # should be checked BEFORE free kv cache slots
         for i, (req, accept_index_row) in enumerate(zip(batch.reqs, accept_index_cpu)):
+            logger.info(f"Processing request {i}: rid={req.rid}")
+            logger.info(f"Request {i} accept_index_row: {accept_index_row}")
+            logger.info(f"Request {i} current output_ids length: {len(req.output_ids)}")
+            logger.info(f"Request {i} current finished status: {req.finished()}")
+            
             for j, idx in enumerate(accept_index_row):
                 if idx == -1:
+                    logger.info(f"Request {i}: hit -1 at position {j}, breaking")
                     break
                 id = predict_cpu[idx]
+                logger.info(f"Request {i}: appending token {id} (idx={idx}) at position {j}")
                 req.output_ids.append(id)
                 req.check_finished()
+                logger.info(f"Request {i}: after appending token {id}, finished={req.finished()}")
+                
                 if req.finished():
                     has_finished = True
+                    logger.info(f"Request {i}: FINISHED! Setting tokens after position {j} to -1")
                     # set all tokens after finished token to -1 and break
                     accept_index[i, j + 1 :] = -1
                     break
@@ -519,23 +567,44 @@ class EagleVerifyInput:
                                 f"{i=}, {req=}\n" f"{accept_index=}\n" f"{predict=}\n"
                             )
                             raise e
+            
             if not req.finished():
+                logger.info(f"Request {i}: not finished, adding to unfinished list")
                 unfinished_index.append(i)
                 if idx == -1:
                     unfinished_accept_index.append(accept_index[i, :j])
                 else:
                     unfinished_accept_index.append(accept_index[i])
+            else:
+                logger.info(f"Request {i}: finished, not adding to unfinished list")
+                
             req.spec_verify_ct += 1
+            logger.info(f"Request {i}: spec_verify_ct incremented to {req.spec_verify_ct}")
+
+        logger.info(f"=== Processing Summary ===")
+        logger.info(f"Has finished: {has_finished}")
+        logger.info(f"Unfinished indices: {unfinished_index}")
+        logger.info(f"Final accept_index after processing: {accept_index}")
 
         if has_finished:
-            accept_length = (accept_index != -1).sum(dim=1) - 1
+            logger.info(f"=== Accept Length Calculation ===")
+            raw_sum = (accept_index != -1).sum(dim=1)
+            accept_length = raw_sum - 1
+            logger.info(f"Accept index for calculation: {accept_index}")
+            logger.info(f"Raw sum (non -1 count): {raw_sum}")
+            logger.info(f"Final accept_length (raw_sum - 1): {accept_length}")
 
         # Free the KV cache for unaccepted tokens
         # TODO: fuse them
+        logger.info(f"=== KV Cache Management ===")
+        logger.info(f"Accept index before filtering: {accept_index}")
         accept_index = accept_index[accept_index != -1]
+        logger.info(f"Accept index after filtering: {accept_index}")
         verified_id = predict[accept_index]
+        logger.info(f"Verified ID: {verified_id}")
         evict_mask = torch.full_like(self.draft_token, True, dtype=torch.bool)
         evict_mask[accept_index] = False
+        logger.info(f"Evict mask shape: {evict_mask.shape}, True count: {evict_mask.sum()}")
 
         if page_size == 1:
             # TODO: boolean array index leads to a device sync. Remove it.
@@ -622,6 +691,11 @@ class EagleVerifyInput:
                 req_pool_indices_for_draft_extend=batch.req_pool_indices,
             )
 
+            logger.info(f"=== Returning Unfinished Output ===")
+            logger.info(f"Draft input accept_length_cpu: {draft_input.accept_length_cpu}")
+            logger.info(f"Verified ID: {verified_id}")
+            logger.info(f"Accepted indices: {accept_index}")
+            
             return EagleVerifyOutput(
                 draft_input=draft_input,
                 logits_output=logits_output,
@@ -643,6 +717,10 @@ class EagleVerifyInput:
                 batch.seq_lens.add_(accept_length + 1)
 
             accept_length_cpu = accept_length.tolist()
+            logger.info(f"=== Finished Case Processing ===")
+            logger.info(f"Accept length CPU: {accept_length_cpu}")
+            logger.info(f"Unfinished accept index length: {len(unfinished_accept_index)}")
+            
             if len(unfinished_accept_index) > 0:
                 unfinished_accept_index = torch.cat(unfinished_accept_index)
                 unfinished_index_device = torch.tensor(
@@ -651,6 +729,8 @@ class EagleVerifyInput:
                 draft_input_accept_length_cpu = [
                     accept_length_cpu[i] for i in unfinished_index
                 ]
+                logger.info(f"Draft input accept length CPU: {draft_input_accept_length_cpu}")
+                logger.info(f"Unfinished index device: {unfinished_index_device}")
                 if page_size == 1 or self.topk == 1:
                     batch.out_cache_loc = batch.out_cache_loc[unfinished_accept_index]
                 else:
@@ -694,6 +774,12 @@ class EagleVerifyInput:
                     capture_hidden_mode=CaptureHiddenMode.LAST,
                 )
 
+            logger.info(f"=== Final Verify Output ===")
+            logger.info(f"Final accept_length_per_req_cpu: {accept_length_cpu}")
+            logger.info(f"Final verified_id: {verified_id}")
+            logger.info(f"Final accepted_indices: {accept_index}")
+            logger.info(f"=== Eagle3 Verify End ===")
+            
             return EagleVerifyOutput(
                 draft_input=draft_input,
                 logits_output=logits_output,

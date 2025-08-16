@@ -177,8 +177,9 @@ class SchedulerMetricsMixin:
             )
             self.cum_spec_accept_length += self.spec_num_total_accepted_tokens
             self.cum_spec_accept_count += self.spec_num_total_forward_ct
+            msg += f"accept len: {spec_accept_length:.2f}, cum_spec_accept_length： {self.cum_spec_accept_length:.2f}, cum_spec_accept_count: {self.cum_spec_accept_count:.2f}, "
             self.spec_num_total_accepted_tokens = self.spec_num_total_forward_ct = 0
-            msg += f"accept len: {spec_accept_length:.2f}, "
+            
 
         if self.disaggregation_mode == DisaggregationMode.DECODE:
             msg += f"pre-allocated usage: {self.disagg_decode_prealloc_queue.num_tokens_pre_allocated / self.max_total_num_tokens:.2f}, "

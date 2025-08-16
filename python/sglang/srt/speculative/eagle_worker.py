@@ -328,6 +328,7 @@ class EAGLEWorker(TpModelWorker):
             the batch id (used for overlap schedule), and number of accepted tokens.
         """
         if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
+            logger.info("Running draft extend forward.")
             logits_output, next_token_ids, bid, seq_lens_cpu = (
                 self.forward_target_extend(batch)
             )
@@ -339,9 +340,11 @@ class EAGLEWorker(TpModelWorker):
         else:
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 spec_info = self.draft(batch)
+                logger.info(f"Running draft forward. spec_info={spec_info}")
             logits_output, verify_output, model_worker_batch, can_run_cuda_graph = (
                 self.verify(batch, spec_info)
             )
+            logger.info(f"Running draft verify. logits_output={logits_output}, verify_output={verify_output} ,model_worker_batch={model_worker_batch}, can_run_cuda_graph={can_run_cuda_graph}")
 
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 # NOTE: We should use `check_forward_draft_extend_after_decode`
@@ -409,6 +412,7 @@ class EAGLEWorker(TpModelWorker):
     def _draft_preprocess_decode(self, batch: ScheduleBatch):
         # Parse args
         num_seqs = batch.batch_size()
+        logger.info(f'Running _draft_preprocess_decode. num_seqs={num_seqs}')
         spec_info = batch.spec_info
 
         # Accumulate penalty
@@ -528,7 +532,7 @@ class EAGLEWorker(TpModelWorker):
 
         spec_info = batch.spec_info
         assert isinstance(spec_info, EagleDraftInput)
-
+        logger.info(f'Running draft(func) batch ={batch.batch_size()}')
         spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
         spec_info.num_tokens_per_batch = self.topk
         spec_info.num_tokens_for_logprob_per_batch = self.topk
@@ -554,7 +558,7 @@ class EAGLEWorker(TpModelWorker):
                 self.draft_attn_backend.init_forward_metadata(forward_batch)
             # Run forward steps
             score_list, token_list, parents_list = self.draft_forward(forward_batch)
-
+        logger.info(f'Running draft(func) batch_2 ={batch.batch_size()}')
         if batch.forward_mode.is_idle():
             return EagleVerifyInput.create_idle_input(
                 self.topk,
@@ -657,6 +661,7 @@ class EAGLEWorker(TpModelWorker):
         return score_list, token_list, parents_list
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
+        logger.info(f'Running verify(func) batch ={batch.batch_size()}')
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.return_hidden_states = False
         batch.forward_mode = (
@@ -670,7 +675,7 @@ class EAGLEWorker(TpModelWorker):
             seq_lens_cpu_cache=spec_info.seq_lens_cpu
         )
         assert model_worker_batch.capture_hidden_mode == spec_info.capture_hidden_mode
-
+        logger.info(f'Running verify_2(func) batch ={batch.batch_size()}')
         if batch.has_grammar:
             retrieve_next_token_cpu = spec_info.retrive_next_token.cpu()
             retrieve_next_sibling_cpu = spec_info.retrive_next_sibling.cpu()
@@ -730,7 +735,7 @@ class EAGLEWorker(TpModelWorker):
             ForwardMode.DECODE if not batch.forward_mode.is_idle() else ForwardMode.IDLE
         )
         batch.spec_info = res.draft_input
-
+        logger.info(f'Running verify(func)_3 batch ={batch.batch_size()}')
         return logits_output, res, model_worker_batch, can_run_cuda_graph
 
     def add_logprob_values(

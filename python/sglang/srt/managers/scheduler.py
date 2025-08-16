@@ -1744,6 +1744,7 @@ class Scheduler(
                     )
                 bid = model_worker_batch.bid
             else:
+                logger.info(f"Running speculative generationtive generation batch , The input Batch size is {batch.batch_size()}")
                 (
                     logits_output,
                     next_token_ids,
@@ -1752,6 +1753,7 @@ class Scheduler(
                     can_run_cuda_graph,
                 ) = self.draft_worker.forward_batch_speculative_generation(batch)
                 bs = batch.batch_size()
+                logger.info(f"Speculative generationtive generation batch , The input Batch size is {bs}")
                 self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
                 self.spec_num_total_forward_ct += bs
                 self.num_generated_tokens += num_accepted_tokens
