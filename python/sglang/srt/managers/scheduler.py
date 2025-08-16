@@ -772,6 +772,7 @@ class Scheduler(
     @DynamicGradMode()
     def event_loop_normal(self):
         """A normal scheduler loop."""
+        logger.info("Normal schedule is enabled.")
         while True:
             recv_reqs = self.recv_requests()
             self.process_input_requests(recv_reqs)
@@ -791,6 +792,7 @@ class Scheduler(
     @DynamicGradMode()
     def event_loop_overlap(self):
         """A scheduler loop that overlaps the CPU processing and GPU computation."""
+        logger.info("Overlap schedule is enabled.")
         self.result_queue = deque()
 
         while True:
@@ -1753,12 +1755,23 @@ class Scheduler(
                     can_run_cuda_graph,
                 ) = self.draft_worker.forward_batch_speculative_generation(batch)
                 bs = batch.batch_size()
-                logger.info(f"Speculative generationtive generation batch , The input Batch size is {bs}")
-                logger.info(f"next_token_ids : {next_token_ids}, nums_accepted_tokens : {num_accepted_tokens}")
-                self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
-                self.spec_num_total_forward_ct += bs
-                logger.info(f"spec_num_total_accepted_tokens : {self.spec_num_total_accepted_tokens}")
-                logger.info(f"spec_num_total_forward_ct : {self.spec_num_total_forward_ct}")
+                if not batch.forward_mode.is_extend():  # 只有非extend模式才统计
+                    logger.info(f"Speculative generationtive generation batch , The input Batch size is {bs}")
+                    logger.info(f"next_token_ids : {next_token_ids}, nums_accepted_tokens : {num_accepted_tokens}")
+                    self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
+                    self.spec_num_total_forward_ct += bs
+                    logger.info(f"[DECODE] Added to stats: accepted={num_accepted_tokens}, bs={bs}")
+
+                    logger.info(f"spec_num_total_accepted_tokens : {self.spec_num_total_accepted_tokens}")
+                    logger.info(f"spec_num_total_forward_ct : {self.spec_num_total_forward_ct}")
+                else:
+                    logger.info(f"[EXTEND] Skipped stats: accepted={num_accepted_tokens}, bs={bs}")
+                # logger.info(f"Speculative generationtive generation batch , The input Batch size is {bs}")
+                # logger.info(f"next_token_ids : {next_token_ids}, nums_accepted_tokens : {num_accepted_tokens}")
+                # self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
+                # self.spec_num_total_forward_ct += bs
+                # logger.info(f"spec_num_total_accepted_tokens : {self.spec_num_total_accepted_tokens}")
+                # logger.info(f"spec_num_total_forward_ct : {self.spec_num_total_forward_ct}")
                 self.num_generated_tokens += num_accepted_tokens
 
             if self.pp_group.is_last_rank:
