@@ -1754,8 +1754,11 @@ class Scheduler(
                 ) = self.draft_worker.forward_batch_speculative_generation(batch)
                 bs = batch.batch_size()
                 logger.info(f"Speculative generationtive generation batch , The input Batch size is {bs}")
+                logger.info(f"next_token_ids : {next_token_ids}, nums_accepted_tokens : {num_accepted_tokens}")
                 self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
                 self.spec_num_total_forward_ct += bs
+                logger.info(f"spec_num_total_accepted_tokens : {self.spec_num_total_accepted_tokens}")
+                logger.info(f"spec_num_total_forward_ct : {self.spec_num_total_forward_ct}")
                 self.num_generated_tokens += num_accepted_tokens
 
             if self.pp_group.is_last_rank:

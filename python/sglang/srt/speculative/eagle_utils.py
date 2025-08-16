@@ -395,6 +395,7 @@ class EagleVerifyInput:
         logger.info(f"Accept index shape: {accept_index.shape}")
 
         if bs != len(sampling_info):
+            logger.info("Sampling info length mismatch, copying sampling info")
             sampling_info = copy.deepcopy(sampling_info)
             # NOTE: retrive_index are the indices of the requests that are kept.
             sampling_info.filter_batch(self.retrive_index.tolist(), self.retrive_index)
@@ -486,6 +487,8 @@ class EagleVerifyInput:
             coins_for_final_sampling = torch.rand(
                 (bs,), dtype=torch.float32, device="cuda"
             )
+            logger.info(f"Predict before sampling: {predict}")
+
             tree_speculative_sampling_target_only(
                 predicts=predict,  # mutable
                 accept_index=accept_index,  # mutable
@@ -510,7 +513,7 @@ class EagleVerifyInput:
             logger.info(f"After sampling verification:")
             logger.info(f"Predict: {predict}")
             logger.info(f"Accept index: {accept_index}")
-            logger.info(f"Accept length: {accept_length}")
+            logger.info(f"Accept length: {accept_length}") # 这个已经是不包含的了
 
         if SIMULATE_ACC_LEN:
             # Do simulation
@@ -539,7 +542,7 @@ class EagleVerifyInput:
         for i, (req, accept_index_row) in enumerate(zip(batch.reqs, accept_index_cpu)):
             logger.info(f"Processing request {i}: rid={req.rid}")
             logger.info(f"Request {i} accept_index_row: {accept_index_row}")
-            logger.info(f"Request {i} current output_ids length: {len(req.output_ids)}")
+            logger.info(f"Request {i} current output_ids length: {len(req.output_ids)}, output_ids : {req.output_ids}")
             logger.info(f"Request {i} current finished status: {req.finished()}")
             
             for j, idx in enumerate(accept_index_row):
@@ -549,14 +552,16 @@ class EagleVerifyInput:
                 id = predict_cpu[idx]
                 logger.info(f"Request {i}: appending token {id} (idx={idx}) at position {j}")
                 req.output_ids.append(id)
-                req.check_finished()
+                req.check_finished() ##重点
                 logger.info(f"Request {i}: after appending token {id}, finished={req.finished()}")
                 
                 if req.finished():
                     has_finished = True
                     logger.info(f"Request {i}: FINISHED! Setting tokens after position {j} to -1")
                     # set all tokens after finished token to -1 and break
+                    logger.info(f"accept_index before : {accept_index}")
                     accept_index[i, j + 1 :] = -1
+                    logger.info(f"accept_index after : {accept_index}")
                     break
                 else:
                     if req.grammar is not None:
@@ -589,7 +594,7 @@ class EagleVerifyInput:
         if has_finished:
             logger.info(f"=== Accept Length Calculation ===")
             raw_sum = (accept_index != -1).sum(dim=1)
-            accept_length = raw_sum - 1
+            accept_length = raw_sum - 1 #不算最后一个token ？ 是因为不算结束token还是不算奖励token
             logger.info(f"Accept index for calculation: {accept_index}")
             logger.info(f"Raw sum (non -1 count): {raw_sum}")
             logger.info(f"Final accept_length (raw_sum - 1): {accept_length}")

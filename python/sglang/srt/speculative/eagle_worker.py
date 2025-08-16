@@ -344,7 +344,7 @@ class EAGLEWorker(TpModelWorker):
             logits_output, verify_output, model_worker_batch, can_run_cuda_graph = (
                 self.verify(batch, spec_info)
             )
-            logger.info(f"Running draft verify. logits_output={logits_output}, verify_output={verify_output} ,model_worker_batch={model_worker_batch}, can_run_cuda_graph={can_run_cuda_graph}")
+            logger.info(f"Running draft verify. verify_output={verify_output} ")
 
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 # NOTE: We should use `check_forward_draft_extend_after_decode`
@@ -355,6 +355,7 @@ class EAGLEWorker(TpModelWorker):
                 ):
                     # decode is not finished
                     self.forward_draft_extend_after_decode(batch)
+                    logger.info('decode is not finished')
 
             return (
                 logits_output,
@@ -719,7 +720,7 @@ class EAGLEWorker(TpModelWorker):
             self.page_size,
             vocab_mask,
         )
-
+        logger.info(f"After verify, accept_length_per_req_cpu = {res.accept_length_per_req_cpu}")
         # Post process based on verified outputs.
         # Pick indices that we care (accepted)
         logits_output.next_token_logits = logits_output.next_token_logits[
@@ -732,8 +733,11 @@ class EAGLEWorker(TpModelWorker):
 
         # Prepare the batch for the next draft forwards.
         batch.forward_mode = (
+            ## ??? finish ? why for next draft forward? 
             ForwardMode.DECODE if not batch.forward_mode.is_idle() else ForwardMode.IDLE
         )
+        logger.info(f"After NEXT draft forwards, accept_length_per_req_cpu = {res.accept_length_per_req_cpu}")
+        
         batch.spec_info = res.draft_input
         logger.info(f'Running verify(func)_3 batch ={batch.batch_size()}')
         return logits_output, res, model_worker_batch, can_run_cuda_graph
